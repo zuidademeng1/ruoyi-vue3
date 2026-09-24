@@ -72,6 +72,9 @@ function filterAsyncRouter(asyncRouterMap, lastRouter = false, type = false) {
       } else {
         route.component = loadView(route.component)
       }
+    } else if (route.children && route.children.length) {
+      // 后端目录菜单 component 为空，按 Layout 处理（保证子页面能渲染在布局里）
+      route.component = Layout
     }
     if (route.children != null && route.children && route.children.length) {
       route.children = filterAsyncRouter(route.children, route, type)

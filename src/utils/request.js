@@ -105,7 +105,13 @@ service.interceptors.response.use(res => {
       ElNotification.error({ title: msg })
       return Promise.reject('error')
     } else {
-      return  Promise.resolve(res.data)
+      // 后端分页字段放在 data 里（{data:{rows,total}}），上提到顶层以兼容若依前端
+      const body = res.data
+      if (body.data && typeof body.data === 'object' && !Array.isArray(body.data) && body.data.rows !== undefined) {
+        body.rows = body.data.rows
+        body.total = body.data.total
+      }
+      return Promise.resolve(body)
     }
   },
   error => {

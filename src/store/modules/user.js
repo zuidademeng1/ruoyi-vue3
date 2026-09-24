@@ -1,7 +1,7 @@
 import router from '@/router'
 import cache from '@/plugins/cache'
 import { ElMessageBox, } from 'element-plus'
-import { login, logout, getInfo } from '@/api/login'
+import { login, getInfo } from '@/api/login'
 import { getToken, setToken, removeToken } from '@/utils/auth'
 import { isHttp, isEmpty } from "@/utils/validate"
 import useLockStore from '@/store/modules/lock'
@@ -28,8 +28,8 @@ const useUserStore = defineStore(
         const uuid = userInfo.uuid
         return new Promise((resolve, reject) => {
           login(username, password, code, uuid).then(res => {
-            setToken(res.token)
-            this.token = res.token
+            setToken(res.data.token)
+            this.token = res.data.token
             useLockStore().unlockScreen()
             resolve()
           }).catch(error => {
@@ -41,34 +41,21 @@ const useUserStore = defineStore(
       getInfo() {
         return new Promise((resolve, reject) => {
           getInfo().then(res => {
-            const user = res.user
-            let avatar = user.avatar || ""
+            const data = res.data || {}
+            let avatar = data.avatar || ""
             if (!isHttp(avatar)) {
               avatar = (isEmpty(avatar)) ? defAva : import.meta.env.VITE_APP_BASE_API + avatar
             }
-            if (res.roles && res.roles.length > 0) { // 验证返回的roles是否是一个非空数组
-              this.roles = res.roles
-              this.permissions = res.permissions
+            if (data.roles && data.roles.length > 0) { // 验证返回的roles是否是一个非空数组
+              this.roles = data.roles
+              this.permissions = data.permissions || []
             } else {
               this.roles = ['ROLE_DEFAULT']
             }
-            this.id = user.userId
-            this.name = user.userName
-            this.nickName = user.nickName
+            this.id = data.userId
+            this.name = data.userName
+            this.nickName = data.nickName
             this.avatar = avatar
-            cache.session.set('pwrChrtype', res.pwdChrtype)
-            /* 初始密码提示 */
-            if(res.isDefaultModifyPwd) {
-              ElMessageBox.confirm('您的密码还是初始密码，请修改密码！',  '安全提示', {  confirmButtonText: '确定',  cancelButtonText: '取消',  type: 'warning' }).then(() => {
-                router.push({ name: 'Profile', params: { activeTab: 'resetPwd' } })
-              }).catch(() => {})
-            }
-            /* 过期密码提示 */
-            if(!res.isDefaultModifyPwd && res.isPasswordExpired) {
-              ElMessageBox.confirm('您的密码已过期，请尽快修改密码！',  '安全提示', {  confirmButtonText: '确定',  cancelButtonText: '取消',  type: 'warning' }).then(() => {
-                router.push({ name: 'Profile', params: { activeTab: 'resetPwd' } })
-              }).catch(() => {})
-            }
             resolve(res)
           }).catch(error => {
             reject(error)
@@ -77,17 +64,11 @@ const useUserStore = defineStore(
       },
       // 退出系统
       logOut() {
-        return new Promise((resolve, reject) => {
-          logout(this.token).then(() => {
-            this.token = ''
-            this.roles = []
-            this.permissions = []
-            removeToken()
-            resolve()
-          }).catch(error => {
-            reject(error)
-          })
-        })
+        this.token = ''
+        this.roles = []
+        this.permissions = []
+        removeToken()
+        return Promise.resolve()
       }
     }
   })
