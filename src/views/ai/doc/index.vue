@@ -41,7 +41,7 @@
       <el-table-column label="上传时间" prop="uploadTime" width="180" align="center" />
       <el-table-column label="操作" align="center" width="200">
         <template #default="scope">
-          <el-button link type="primary" @click="handleParse(scope.row)">解析</el-button>
+          <el-button link type="primary" :disabled="scope.row.chunkStatus === 'completed'" @click="handleParse(scope.row)">解析</el-button>
           <el-button link type="primary" @click="handleView(scope.row)">预览</el-button>
           <el-button link type="danger" @click="handleDelete(scope.row)">删除</el-button>
         </template>
@@ -84,13 +84,14 @@ function getKbOptions() {
   }).catch(() => {})
 }
 
-function getList() {
-  loading.value = true
+function getList(silent, callback) {
+  if (!silent) loading.value = true
   const params = { ...queryParams.value, keyword: queryParams.value.keyword || undefined }
   listDoc(params).then(res => {
     docList.value = res.rows || []
     total.value = res.total || 0
     loading.value = false
+    if (callback) callback()
   }).catch(() => { loading.value = false })
 }
 
@@ -115,13 +116,46 @@ function handleUploadError() {
   ElMessage.error('上传失败')
 }
 
+let pollingTimer = null
+
 function handleParse(row) {
   ElMessageBox.confirm(`确认对「${row.fileName}」执行解析吗？`, '提示', { type: 'warning' }).then(() => {
     return parseDoc(row.docId)
   }).then(() => {
     ElMessage.success('已提交解析，后台处理中')
     getList()
+    startPolling(row.docId)
   }).catch(() => {})
+}
+
+// 提交解析后轮询，直到该文档状态变为 completed/failed 或超过 10 分钟
+function startPolling(docId) {
+  stopPolling()
+  const started = Date.now()
+  pollingTimer = setInterval(() => {
+    if (Date.now() - started > 10 * 60 * 1000) {
+      stopPolling()
+      return
+    }
+    getList(true, () => {
+      const doc = docList.value.find(d => d.docId === docId)
+      if (doc && (doc.chunkStatus === 'completed' || doc.chunkStatus === 'failed')) {
+        stopPolling()
+        if (doc.chunkStatus === 'completed') {
+          ElMessage.success('解析完成')
+        } else {
+          ElMessage.error('解析失败')
+        }
+      }
+    })
+  }, 3000)
+}
+
+function stopPolling() {
+  if (pollingTimer) {
+    clearInterval(pollingTimer)
+    pollingTimer = null
+  }
 }
 
 function handleView(row) {

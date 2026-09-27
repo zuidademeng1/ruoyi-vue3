@@ -9,6 +9,15 @@ export function listDoc(query) {
   })
 }
 
+// 查询公共知识库的文档列表（学生浏览）
+export function listPublicDoc(query) {
+  return request({
+    url: '/doc/public',
+    method: 'get',
+    params: query
+  })
+}
+
 // 解析文档（推入后台队列）
 export function parseDoc(docId) {
   return request({

@@ -35,3 +35,12 @@ export function listRecord(sessionId) {
     params: { session_id: sessionId }
   })
 }
+
+// 更新会话（重命名）
+export function updateSession(data) {
+  return request({
+    url: '/session/update',
+    method: 'put',
+    data: data
+  })
+}

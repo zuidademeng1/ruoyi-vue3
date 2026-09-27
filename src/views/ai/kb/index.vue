@@ -135,7 +135,11 @@ function submitForm() {
 }
 
 function handleDelete(row) {
-  ElMessageBox.confirm(`确认删除知识库「${row.kbName}」吗？`, '提示', { type: 'warning' }).then(() => {
+  const hasDocs = row.docCount > 0
+  const msg = hasDocs
+    ? `知识库「${row.kbName}」含有 ${row.docCount} 个文档，删除后这些文档将无法再访问，确认删除吗？`
+    : `确认删除知识库「${row.kbName}」吗？`
+  ElMessageBox.confirm(msg, '警告', { type: 'warning', confirmButtonText: '确定删除', cancelButtonText: '取消' }).then(() => {
     return delKb(row.kbId)
   }).then(() => {
     ElMessage.success('删除成功')
@@ -145,7 +149,11 @@ function handleDelete(row) {
 
 function handleBatchDelete() {
   if (!ids.value.length) return
-  ElMessageBox.confirm(`确认删除选中的 ${ids.value.length} 个知识库吗？`, '提示', { type: 'warning' }).then(() => {
+  const hasDocs = kbList.value.some(kb => ids.value.includes(kb.kbId) && kb.docCount > 0)
+  const msg = hasDocs
+    ? '选中的知识库中含有文档，删除后这些文档将无法再访问，确认删除吗？'
+    : `确认删除选中的 ${ids.value.length} 个知识库吗？`
+  ElMessageBox.confirm(msg, '警告', { type: 'warning', confirmButtonText: '确定删除', cancelButtonText: '取消' }).then(() => {
     return batchDelKb(ids.value)
   }).then(() => {
     ElMessage.success('删除成功')

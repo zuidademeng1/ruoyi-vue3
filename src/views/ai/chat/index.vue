@@ -14,6 +14,7 @@
           @click="handleSelectSession(s)"
         >
           <span class="session-title">{{ s.title || '新对话' }}</span>
+          <span class="session-edit" @click.stop="handleRenameSession(s)">✎</span>
           <span class="session-del" @click.stop="handleDeleteSession(s)">×</span>
         </div>
       </div>
@@ -26,8 +27,9 @@
           v-model="selectedKbIds"
           multiple
           collapse-tags
-          placeholder="选择知识库（可选，选了走 RAG 检索）"
+          placeholder="检索范围（不选则全部公共库）"
           style="width: 340px"
+          @change="onKbChange"
         >
           <el-option v-for="kb in kbOptions" :key="kb.kbId" :label="kb.kbName" :value="kb.kbId" />
         </el-select>
@@ -37,7 +39,18 @@
       <div ref="msgRef" class="chat-messages">
         <div v-if="!messages.length" class="chat-empty">开始提问吧，例如：这个知识库讲了什么？</div>
         <div v-for="(m, i) in messages" :key="i" class="msg-row" :class="m.role">
-          <div class="msg-bubble">{{ m.content }}</div>
+          <div class="msg-col">
+            <div class="msg-bubble">{{ m.content }}</div>
+            <div v-if="m.sources && m.sources.length" class="msg-sources">
+              <div class="sources-toggle" @click="toggleSources(i)">📄 来源（{{ m.sources.length }}）</div>
+              <div v-if="m.showSources" class="sources-list">
+                <div v-for="(s, si) in m.sources" :key="si" class="source-item">
+                  <div class="source-title">{{ s.filename }}<span v-if="s.score !== undefined"> · 相关度 {{ s.score }}</span></div>
+                  <div class="source-content">{{ s.content }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -57,7 +70,7 @@
 
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listSession, addSession, delSession, listRecord } from '@/api/ai/session'
+import { listSession, addSession, delSession, listRecord, updateSession } from '@/api/ai/session'
 import { stopChat } from '@/api/ai/chat'
 import { listKbByScope } from '@/api/ai/kb'
 import { getToken } from '@/utils/auth'
@@ -69,11 +82,15 @@ const inputText = ref('')
 const streaming = ref(false)
 const kbOptions = ref([])
 const selectedKbIds = ref([])
+const publicKbIds = ref([])
+const sessionKbMap = ref({})
 const msgRef = ref()
 
 function getKbOptions() {
   Promise.all([listKbByScope('personal'), listKbByScope('public')]).then(([p, pub]) => {
     kbOptions.value = [...(p.data || []), ...(pub.data || [])]
+    // 记录所有公共知识库 id（下拉框不预选，发送时未选库则默认用全部公共库）
+    publicKbIds.value = (pub.data || []).map(kb => kb.kbId)
   }).catch(() => {})
 }
 
@@ -94,15 +111,28 @@ function handleNewSession() {
     loadSessions()
     currentSessionId.value = data.sessionId
     messages.value = []
+    // 新建会话时清空知识库选择（不选 = 默认全部公共库），不继承上一个会话
+    selectedKbIds.value = []
   })
 }
 
 function handleSelectSession(s) {
   currentSessionId.value = s.sessionId
+  // 恢复该会话的知识库选择（没记录则留空，发送时默认全部公共库）
+  selectedKbIds.value = sessionKbMap.value[s.sessionId]
+    ? [...sessionKbMap.value[s.sessionId]]
+    : []
   listRecord(s.sessionId).then(res => {
     messages.value = (res.data || []).map(r => ({ role: r.role, content: r.content }))
     scrollToBottom()
   }).catch(() => {})
+}
+
+// 用户手动改变知识库选择时，记录到当前会话
+function onKbChange(val) {
+  if (currentSessionId.value) {
+    sessionKbMap.value[currentSessionId.value] = [...val]
+  }
 }
 
 function handleDeleteSession(s) {
@@ -114,6 +144,21 @@ function handleDeleteSession(s) {
       currentSessionId.value = ''
       messages.value = []
     }
+    loadSessions()
+  }).catch(() => {})
+}
+
+function handleRenameSession(s) {
+  ElMessageBox.prompt('请输入新的对话名称', '重命名', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    inputValue: s.title || '新对话',
+    inputPattern: /\S+/,
+    inputErrorMessage: '名称不能为空'
+  }).then(({ value }) => {
+    return updateSession({ sessionId: s.sessionId, title: value })
+  }).then(() => {
+    ElMessage.success('重命名成功')
     loadSessions()
   }).catch(() => {})
 }
@@ -133,12 +178,13 @@ async function sendMessage() {
   streaming.value = true
   scrollToBottom()
 
-  const useRag = selectedKbIds.value.length > 0
-  const url = import.meta.env.VITE_APP_BASE_API + (useRag ? '/chat/rag-stream' : '/chat/stream')
+  // 始终走 RAG 检索；未选知识库时默认检索全部公共库
+  const kbId = selectedKbIds.value.length > 0 ? selectedKbIds.value : publicKbIds.value
+  const url = import.meta.env.VITE_APP_BASE_API + '/chat/rag-stream'
   const body = {
     sessionId: currentSessionId.value,
     content,
-    ...(useRag ? { kbId: selectedKbIds.value } : {})
+    kbId
   }
 
   let full = ''
@@ -172,7 +218,9 @@ async function sendMessage() {
           if (!json) continue
           try {
             const data = JSON.parse(json)
-            if (data.token) {
+            if (data.sources) {
+              messages.value[aiIdx].sources = data.sources
+            } else if (data.token) {
               full += data.token
               messages.value[aiIdx].content = full
               scrollToBottom()
@@ -198,6 +246,10 @@ function handleStop() {
   stopChat(currentSessionId.value).then(() => {
     ElMessage.info('已发送停止信号')
   })
+}
+
+function toggleSources(i) {
+  messages.value[i].showSources = !messages.value[i].showSources
 }
 
 function scrollToBottom() {
@@ -265,6 +317,15 @@ loadSessions()
 .session-del:hover {
   color: var(--el-color-danger);
 }
+.session-edit {
+  color: #999;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.session-edit:hover {
+  color: var(--el-color-primary);
+}
 .chat-main {
   flex: 1;
   display: flex;
@@ -297,8 +358,14 @@ loadSessions()
 .msg-row.assistant {
   justify-content: flex-start;
 }
-.msg-bubble {
+.msg-col {
   max-width: 70%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.msg-bubble {
+  max-width: 100%;
   padding: 10px 14px;
   border-radius: 8px;
   font-size: 14px;
@@ -313,6 +380,40 @@ loadSessions()
 .msg-row.assistant .msg-bubble {
   background: #fff;
   border: 1px solid var(--el-border-color-light);
+}
+.msg-sources {
+  font-size: 12px;
+}
+.sources-toggle {
+  color: var(--el-color-primary);
+  cursor: pointer;
+  user-select: none;
+}
+.sources-list {
+  margin-top: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.source-item {
+  background: #fff;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.source-title {
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 4px;
+}
+.source-content {
+  color: #666;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
 }
 .chat-input {
   padding: 10px;
