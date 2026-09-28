@@ -163,6 +163,8 @@ function handleRenameSession(s) {
   }).catch(() => {})
 }
 
+let abortController = null
+
 async function sendMessage() {
   const content = inputText.value.trim()
   if (!content || streaming.value) return
@@ -176,6 +178,7 @@ async function sendMessage() {
   messages.value.push({ role: 'assistant', content: '' })
   const aiIdx = messages.value.length - 1
   streaming.value = true
+  abortController = new AbortController()
   scrollToBottom()
 
   // 始终走 RAG 检索；未选知识库时默认检索全部公共库
@@ -195,7 +198,8 @@ async function sendMessage() {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + getToken()
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: abortController.signal
     })
     if (!response.ok) {
       throw new Error('HTTP ' + response.status)
@@ -232,7 +236,7 @@ async function sendMessage() {
       }
     }
   } catch (e) {
-    if (!messages.value[aiIdx].content) {
+    if (e.name !== 'AbortError' && !messages.value[aiIdx].content) {
       messages.value[aiIdx].content = '（请求失败，请重试）'
     }
   } finally {
@@ -246,6 +250,12 @@ function handleStop() {
   stopChat(currentSessionId.value).then(() => {
     ElMessage.info('已发送停止信号')
   })
+  // 立即中止前端请求 + 重置发送状态（防止后端卡住时按钮一直「正在发送中」）
+  if (abortController) {
+    abortController.abort()
+    abortController = null
+  }
+  streaming.value = false
 }
 
 function toggleSources(i) {
